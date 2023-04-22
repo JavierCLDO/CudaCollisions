@@ -13,9 +13,7 @@
 #include <thrust/sort.h>
 #include <thrust/remove.h>
 
-#include <chrono>
-#include <thread>
-
+INIT_INSTANCE_STATIC(fen::col_solver);
 
 __global__ void kernel_scale(float* arr, const float scale, const float offset, const unsigned int n)
 {
@@ -56,7 +54,8 @@ __device__ void kernel_sum_reduce(unsigned int* values, unsigned int* out)
 		atomicAdd(out, values[0]);
 }
 
-__global__ void kernel_init_cells(uint32_t* cells, uint32_t* objects, const float* positions, const float* radius, const float cell_dim, const uint32_t min_cell_pos_x, const uint32_t max_cell_pos_x, const uint32_t min_cell_pos_y, const uint32_t max_cell_pos_y, const size_t n, unsigned int* cell_count)
+__global__ void kernel_init_cells(uint32_t* cells, uint32_t* objects, const float* positions, const float* radius, const float cell_dim,
+	const float min_pos_x, const uint32_t max_cell_pos_x, const float min_pos_y, const uint32_t max_cell_pos_y, const size_t n, unsigned int* cell_count)
 {
 	const unsigned BITS = 16; // pos_x is allocated 15 bits because we need space for the home/phantom cell flag
 
@@ -72,8 +71,8 @@ __global__ void kernel_init_cells(uint32_t* cells, uint32_t* objects, const floa
 
 		float dist;
 
-		float x = positions[i];
-		float y = positions[i + n];
+		float x = positions[i] - min_pos_x;
+		float y = positions[i + n] - min_pos_y;
 
 		const uint32_t cell_pos_x = (uint32_t)(x / cell_dim);
 		const uint32_t cell_pos_y = (uint32_t)(y / cell_dim);
@@ -496,94 +495,18 @@ __global__ void kernel_solve_cols(const uint64_t* col_cells, const uint32_t* obj
 	}
 }
 
-unsigned int host_solve_cols(thrust::host_vector<uint64_t> col_cells, thrust::host_vector<uint32_t> objects, thrust::host_vector<float> positions, thrust::host_vector<float> radius, const uint32_t n, const unsigned int m, const unsigned char cell_type)
-{
-	unsigned int collisions = 0;
-
-	for (unsigned int i = 0; i < m; ++i)
-	{
-		const uint64_t& col_cell_data = col_cells[i];
-
-		const unsigned int p = col_cell_data & (PHANTOM_LIMIT - 1ui64);
-		const unsigned int h = (col_cell_data >> BITS_OFFSET_HOME) & (HOME_LIMIT - 1ui64);
-		const unsigned int start = (col_cell_data >> BITS_OFFSET_START) & (START_LIMIT - 1ui64);
-
-		if (1/*cell_type == ((objects[start] >> 1) & 0b11)*/)
-		{
-			float d_c1, d_c2;
-			uint32_t _c1, _c2;
-			uint32_t t_c1, t_c2;
-			uint32_t ts_c1, ts_c2;
-			float dist, dx;
-
-			const unsigned int num_col_list = h + p;
-
-			for (unsigned int c1 = 0; c1 < h; ++c1)
-			{
-				unsigned int offset = start + c1;
-				_c1 = objects[offset] >> 7;
-				t_c1 = objects[offset] >> 1 & 0b11;
-				ts_c1 = objects[offset] >> 3 & 0b1111;
-
-				d_c1 = radius[_c1];
-
-				for (unsigned int c2 = c1 + 1; c2 < num_col_list; ++c2)
-				{
-					offset = start + c2;
-					_c2 = objects[offset] >> 7;
-					t_c2 = objects[offset] >> 1 & 0b11;
-					ts_c2 = objects[offset] >> 3 & 0b1111;
-
-					d_c2 = radius[_c2];
-
-					dist = 0;
-
-					if (t_c2 < t_c1 && (0b1 << t_c2 & ts_c1) && (0b1 << t_c1 & ts_c2))
-						continue;
-
-					for (int l = 0; l < DIM; ++l)
-					{
-						dx = positions[_c2 + l * n] - positions[_c1 + l * n];
-						dist += dx * dx;
-					}
-
-					if (dist < ((d_c1 + d_c2) * (d_c2 + d_c1)))
-					{
-						collisions++;
-					}
-				}
-			}
-		}
-	}
-
-	return collisions;
-}
-
-
-__global__ void kernel_simple_init(float* arr, size_t n)
-{
-	for(unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x; i < n; i += (gridDim.x * blockDim.x))
-	{
-		arr[i] = threadIdx.x;
-	}
-}
-
-__global__ void kernel_not_so_simple_init(float* arr, size_t n)
-{
-	for (unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x; i < n; i += (gridDim.x * blockDim.x))
-	{
-		arr[i] = i / blockDim.x;
-	}
-}
-
-
-__global__ void kernel_move_entities(float* positions, float* delta_mov, const uint32_t n, const float max_pos, const float min_pos)
+__global__ void kernel_move_entities(float* positions, float* delta_mov, const uint32_t n, const float min_pos_x, const float max_pos_x, const float min_pos_y, const float max_pos_y)
 {
 	for (unsigned int i = (blockDim.x * blockIdx.x) + threadIdx.x; i < n; i += (gridDim.x * blockDim.x))
 	{
 		positions[i] += delta_mov[i];
-		if (positions[i] < min_pos) positions[i] = min_pos;
-		else if (positions[i] > max_pos) positions[i] = max_pos;
+		positions[i + n] += delta_mov[i + n];
+
+		if (positions[i] < min_pos_x) positions[i] = min_pos_x;
+		else if (positions[i] > max_pos_x) positions[i] = max_pos_x;
+
+		if (positions[i + n] < min_pos_y) positions[i + n] = min_pos_y;
+		else if (positions[i + n] > max_pos_y) positions[i + n] = max_pos_y;
 	}
 }
 
@@ -603,29 +526,6 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 namespace fen
 {
 
-std::unique_ptr<col_solver, decltype(&col_solver::release)> col_solver::instance_ = {nullptr, &col_solver::release};
-
-void hack_init(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, float min_radius, float max_radius)
-{
-	auto half = positions.size() / 2;
-	CUDA_CALL_2(kernel_simple_init, num_blocks, num_threads)(GET_RAW_PTR(positions), half);
-
-	gpuErrchk(cudaPeekAtLastError());
-
-	CUDA_CALL_2(kernel_not_so_simple_init, num_blocks, num_threads)(GET_RAW_PTR(positions) + half, half);
-
-	gpuErrchk(cudaPeekAtLastError());
-
-	curandGenerator_t generator;
-
-	curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_DEFAULT);
-
-	curandGenerateUniform(generator, GET_RAW_PTR(radius), radius.size());
-	CUDA_CALL_2(kernel_scale, num_blocks, num_threads)(GET_RAW_PTR(radius), max_radius - min_radius, min_radius, radius.size());
-
-	gpuErrchk(cudaPeekAtLastError());
-}
-
 void col_solver::init_objects(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, float min_pos_x, float max_pos_x, float min_pos_y, float max_pos_y, float min_radius, float max_radius)
 {
 	curandGenerateUniform(generator, GET_RAW_PTR(positions), positions.size());
@@ -641,58 +541,37 @@ void col_solver::init_objects(unsigned num_blocks, unsigned num_threads, thrust:
 
 unsigned int col_solver::solve_cols_1(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, const size_t num_entities)
 {
-auto start = std::chrono::high_resolution_clock::now();
 
+	profiler.start_timing<0>();
 	unsigned int num_cells = init_cells(num_blocks, num_threads, positions, radius, num_entities);
+	profiler.finish_timing<0>();
+
+	profiler.start_timing<1>();
 	sort_cells();
-
-auto end = std::chrono::high_resolution_clock::now();
-std::chrono::duration<double, std::milli> ms_double = end - start;
-//printf("Elapsed time: init+sort %.3f ms;", ms_double);
-
-start = std::chrono::high_resolution_clock::now();
+	profiler.finish_timing<1>();
 
 	unsigned int collisions = count_cols_1(num_blocks, num_threads, positions, radius, delta_mov, num_entities, num_cells);
 
-end = std::chrono::high_resolution_clock::now();
-ms_double = end - start;
-//printf("count: %.3f ms\n", ms_double);
-
-	//printf("\n");
-	
-	CUDA_CALL_2(kernel_move_entities, num_blocks, num_threads)(GET_RAW_PTR(positions), GET_RAW_PTR(delta_mov), num_entities * DIM, max_pos_x, min_pos_x);
+	profiler.start_timing<4>();
+	CUDA_CALL_2(kernel_move_entities, num_blocks, num_threads)(GET_RAW_PTR(positions), GET_RAW_PTR(delta_mov), num_entities, min_pos_x, max_pos_x, min_pos_y, max_pos_y);
 	thrust::fill(thrust::device, delta_mov.begin(), delta_mov.end(), 0.0f);
 	cudaDeviceSynchronize();
+	profiler.finish_timing<4>();
 
 	return collisions;
 }
 
-unsigned int col_solver::solve_cols_2(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, const size_t num_entities)
-{
-	unsigned int num_cells = init_cells(num_blocks, num_threads, positions, radius, num_entities);
-
-	sort_cells();
-
-	unsigned int collisions = count_cols_2(num_blocks, num_threads, positions, radius, num_entities, num_cells);
-
-	return collisions;
-}
-
-col_solver::col_solver()
+col_solver::col_solver() : Singleton()
 {
 	cudaMalloc((void**)&temp, sizeof(unsigned int));
 
 	curandCreateGenerator(&generator, CURAND_RNG_PSEUDO_DEFAULT);
 }
 
-void col_solver::release(const col_solver* c)
-{
-	delete c;
-}
-
 col_solver::~col_solver()
 {
 	cudaFree(temp);
+	printf("deleting col solver");
 }
 
 void col_solver::init_solver(const size_t num_entities, const float max_rad_, const float min_pos_x_, const float min_pos_y_, const float max_pos_x_, const float max_pos_y_)
@@ -710,6 +589,11 @@ void col_solver::init_solver(const size_t num_entities, const float max_rad_, co
 	min_pos_y = min_pos_y_;
 	max_pos_x = max_pos_x_;
 	max_pos_y = max_pos_y_;
+
+	width = max_pos_x_ - min_pos_x_;
+	height = max_pos_y_ - min_pos_y_;
+
+	profiler.reset();
 }
 
 unsigned int col_solver::init_cells(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, const size_t num_entities)
@@ -725,7 +609,7 @@ unsigned int col_solver::init_cells(unsigned num_blocks, unsigned num_threads, t
 		cell_size = *thrust::max_element(thrust::device, radius.cbegin(), radius.cend());
 
 	CUDA_CALL_3(kernel_init_cells, num_blocks, num_threads, num_threads * sizeof(unsigned int))(GET_RAW_PTR(cells), GET_RAW_PTR(objects), GET_RAW_PTR(positions), GET_RAW_PTR(radius),
-		cell_size, 0, (uint32_t)(max_pos_x / cell_size), 0, (uint32_t)(max_pos_y / cell_size), num_entities, temp);
+		cell_size, min_pos_x, (uint32_t)(width / cell_size), min_pos_y, (uint32_t)(height / cell_size), num_entities, temp);
 
 	gpuErrchk(cudaPeekAtLastError());
 
@@ -745,10 +629,10 @@ void col_solver::sort_cells()
 
 unsigned int col_solver::count_cols_1(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, const size_t num_entities, const unsigned num_cells)
 {
-	//if (thrust::is_sorted(cells.begin(), cells.begin() + num_cells))
-	//	printf("Sorted ");
-
 	//printf("Count\n");
+
+	profiler.start_timing<2>();
+
 	unsigned int cells_per_thread = ((num_cells - 1) / num_blocks) /
 		num_threads +
 		1;
@@ -782,6 +666,11 @@ unsigned int col_solver::count_cols_1(unsigned num_blocks, unsigned num_threads,
 
 	num_blocks = std::min<unsigned int>(num_blocks, (dist / num_threads) + 1u);
 
+
+	profiler.finish_timing<2>();
+
+	profiler.start_timing<3>();
+
 	for (int i = 0; i < 4; ++i)
 	{
 		CUDA_CALL_3(kernel_solve_cols, num_blocks, num_threads, num_threads * sizeof(unsigned int)) (
@@ -795,36 +684,15 @@ unsigned int col_solver::count_cols_1(unsigned num_blocks, unsigned num_threads,
 
 		gpuErrchk(cudaPeekAtLastError());
 	}
+	profiler.finish_timing<3>();
+
+	gpuErrchk(cudaPeekAtLastError());
 
 	unsigned int collisions = 0;
 	cudaMemcpy(&collisions, temp, sizeof(unsigned int), cudaMemcpyDeviceToHost);
 
+
 	return collisions;
 }
 
-unsigned int col_solver::count_cols_2(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, const size_t num_entities, const unsigned num_cells)
-{
-	//if (thrust::is_sorted(cells.begin(), cells.begin() + num_cells))
-	//	printf("Sorted ");
-
-	//printf("Count\n");
-	unsigned int cells_per_thread = ((num_cells - 1) / num_blocks) /
-		num_threads +
-		1;
-
-	cudaMemset(temp, 0, sizeof(unsigned int));
-
-	CUDA_CALL_3(kernel_count_cols, num_blocks, num_threads, num_threads * sizeof(unsigned int))(
-		GET_RAW_PTR(cells), GET_RAW_PTR(objects),
-		GET_RAW_PTR(positions), GET_RAW_PTR(radius),
-		num_entities,
-		num_cells,
-		cells_per_thread,
-		temp
-		);
-
-	unsigned int collisions = 0;
-	cudaMemcpy(&collisions, temp, sizeof(unsigned int), cudaMemcpyDeviceToHost);
-	return collisions;
-}
 }
