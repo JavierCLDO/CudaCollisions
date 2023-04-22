@@ -5,11 +5,13 @@
 #include <array>
 #include <chrono>
 #include <numeric>
-#include <string_view>
 
-template<unsigned N, typename Precision, typename TimeRatio = std::ratio<1, 1>,
-	typename = std::enable_if_t < std::is_floating_point_v<Precision> && std::_Is_ratio_v<TimeRatio> >>
-	class SimpleProfiler
+namespace fen
+{
+
+template<unsigned N, typename Precision, typename TimeRatio = std::ratio<1, 1>, // Default as seconds
+	typename = std::enable_if_t < std::is_floating_point_v<Precision>&& std::_Is_ratio_v<TimeRatio> >>
+class SimpleProfiler
 {
 private:
 	template <typename T> [[nodiscard]] constexpr const char* _get_unit()			const noexcept { return ""; }
@@ -21,14 +23,26 @@ private:
 	using timing_array = std::array<std::chrono::time_point<std::chrono::high_resolution_clock>, N>;
 
 public:
+	using profiler_array = std::array<Precision, N>;
+
+private:
+
+	// Assert messages
+#if NDEBUG
+	static constexpr int m_less_than_n_msg = 1;
+	static constexpr int step_before_msg = 1;
+#else
+	static constexpr const char* m_less_than_n_msg = "m needs to be less than template N";
+	static constexpr const char* step_before_msg = "you need to finish a step before";
+#endif
+
+public:
 
 	SimpleProfiler()
 	{
 		const auto now = std::chrono::high_resolution_clock::now();
 		std::fill(std::begin(timings), std::end(timings), now);
 	}
-
-	using profiler_array = std::array<Precision, N>;
 
 	[[nodiscard]] constexpr const char* unit() const
 	{
@@ -38,16 +52,16 @@ public:
 	/**
 	 * \brief Adds time to M timer
 	 * \tparam M the timer
-	 * \param t time
+	 * \param t_ time
 	 */
 	template<unsigned M, typename = std::enable_if_t<M < N>>
-	void add_time(Precision t)
+	void add_time(Precision t_)
 	{
-		timers[M] += t;
+		timers[M] += t_;
 	}
 
 	/**
-	 * \brief Starts timing M 
+	 * \brief Starts timing M
 	 * \tparam M the timer
 	 */
 	template<unsigned M, typename = std::enable_if_t<M < N>>
@@ -67,33 +81,33 @@ public:
 	}
 
 	/**
-	 * \brief Same as templated version, intended for use in loops
+	 * \brief Same as templated (add_time<M>) version, intended for use in loops
 	 * \param m the timer
-	 * \param t time
+	 * \param t_ time
 	 */
-	void add_time(unsigned m, Precision t)
+	void add_time(unsigned m, Precision t_)
 	{
-		assert(m < N && "m needs to be less than template N");
-		timers[m] += t;
+		assert(m < N&& m_less_than_n_msg);
+		timers[m] += t_;
 	}
 
 	/**
-	 * \brief Same as templated version, intended for use in loops
+	 * \brief Same as templated (start_timing<M>) version, intended for use in loops
 	 * \param m the timer
 	 */
 	void start_timing(unsigned m)
 	{
-		assert(m < N && "m needs to be less than template N");
+		assert(m < N&& m_less_than_n_msg);
 		timings[m] = std::chrono::high_resolution_clock::now();
 	}
 
 	/**
-	 * \brief Same as templated version, intended for use in loops
+	 * \brief Same as templated (finish_timing<M>) version, intended for use in loops
 	 * \param m the timer
 	 */
 	void finish_timing(unsigned m)
 	{
-		assert(m < N && "m needs to be less than template N");
+		assert(m < N&& m_less_than_n_msg);
 		add_time(m, std::chrono::duration<Precision>(std::chrono::high_resolution_clock::now() - timings[m]).count());
 	}
 
@@ -106,7 +120,7 @@ public:
 		++steps;
 
 		// update avg timers
-		for (unsigned i{0}; i < N; ++i) 
+		for (unsigned i{ 0 }; i < N; ++i)
 			avg_timers[i] = timers[i] / steps;
 	}
 
@@ -142,7 +156,7 @@ public:
 			return std::chrono::duration<Precision, TimeRatio>(end - start).count();
 		}
 		else { // If returns something, return a tuple
-			FuncReturnType ret = func(std::forward<Args>(args)...); 
+			FuncReturnType ret = func(std::forward<Args>(args)...);
 			const auto end = std::chrono::high_resolution_clock::now();
 			return std::tuple<Precision, FuncReturnType> {
 				std::chrono::duration<Precision, TimeRatio>(end - start).count(), ret
@@ -176,10 +190,11 @@ public:
 		}
 	}
 
+	template<typename Enum = unsigned>
 	void print_times(std::ostream& os) const
 	{
-		Precision total = 0.0;
-		for(unsigned i{0}; i < N; ++i)
+		Precision total = Precision();
+		for (Enum i{ static_cast<Enum>(0u) }; i < N; ++i)
 		{
 			os << "time for " << i << ": " << timers[i] << ' ' << unit() << '\n';
 			total += timers[i];
@@ -187,11 +202,12 @@ public:
 		os << "total time: " << total << ' ' << unit() << '\n';
 	}
 
+	template<typename Enum = unsigned>
 	void print_avg_times(std::ostream& os) const
 	{
-		assert(steps > 0 && "you need to finish a step before");
-		Precision total = 0.0;
-		for (unsigned i{ 0 }; i < N; ++i)
+		assert(steps > 0 && step_before_msg);
+		Precision total = Precision();
+		for (Enum i{ static_cast<Enum>(0u) }; i < N; ++i)
 		{
 			os << "avg time for " << i << ": " << avg_timers[i] << ' ' << unit() << '\n';
 			total += avg_timers[i];
@@ -199,14 +215,14 @@ public:
 		os << "total avg time: " << total << ' ' << unit() << '\n';
 	}
 
-	const Precision& total_time()
+	[[nodiscard]] const Precision& total_time() const
 	{
-		return std::accumulate(std::begin(timers), std::end(timers), 0.0);
+		return std::accumulate(std::begin(timers), std::end(timers), Precision());
 	}
 
-	const Precision& total_avg_time()
+	[[nodiscard]] const Precision& total_avg_time() const
 	{
-		return std::accumulate(std::begin(avg_timers), std::end(avg_timers), 0.0);
+		return std::accumulate(std::begin(avg_timers), std::end(avg_timers), Precision());
 	}
 
 private:
@@ -221,9 +237,11 @@ public:
 
 	[[nodiscard]] const unsigned int& get_steps(void) const noexcept { return steps; }
 	[[nodiscard]] const profiler_array& get_times(void) const noexcept { return timers; }
-	[[nodiscard]] const profiler_array& get_avg_times(void) const noexcept { assert(steps > 0 && "you need to finish a step before"); return avg_timers; }
+	[[nodiscard]] const profiler_array& get_avg_times(void) const { assert(steps > 0 && step_before_msg); return avg_timers; }
 
 	template<unsigned M, typename = std::enable_if_t<M < N>>
 	[[nodiscard]] const Precision& get_time(void) const noexcept { return timers[M]; }
-	[[nodiscard]] const Precision& get_time(unsigned m) const noexcept { assert(m < N && "m needs to be less than template N"); return timers[m]; }
+	[[nodiscard]] const Precision& get_time(unsigned m) const { assert(m < N&& m_less_than_n_msg); return timers[m]; }
+};
+
 };

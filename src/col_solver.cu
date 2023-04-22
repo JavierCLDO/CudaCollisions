@@ -526,8 +526,11 @@ inline void gpuAssert(cudaError_t code, const char* file, int line, bool abort =
 namespace fen
 {
 
-void col_solver::init_objects(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, float min_pos_x, float max_pos_x, float min_pos_y, float max_pos_y, float min_radius, float max_radius)
+void init_objects(unsigned long long seed, unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, float min_pos_x, float max_pos_x, float min_pos_y, float max_pos_y, float min_radius, float max_radius)
 {
+	auto& generator = col_solver::Instance()->get_generator();
+	curandSetPseudoRandomGeneratorSeed(generator, seed);
+	
 	curandGenerateUniform(generator, GET_RAW_PTR(positions), positions.size());
 	CUDA_CALL_2(kernel_scale, num_blocks, num_threads)(GET_RAW_PTR(positions), max_pos_x - min_pos_x, min_pos_x, positions.size() / 2);
 	CUDA_CALL_2(kernel_scale, num_blocks, num_threads)(GET_RAW_PTR(positions) + positions.size() / 2, max_pos_y - min_pos_y, min_pos_y, positions.size() / 2);
@@ -542,21 +545,23 @@ void col_solver::init_objects(unsigned num_blocks, unsigned num_threads, thrust:
 unsigned int col_solver::solve_cols_1(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, const size_t num_entities)
 {
 
-	profiler.start_timing<0>();
+	profiler.start_timing<Cells_Init>();
 	unsigned int num_cells = init_cells(num_blocks, num_threads, positions, radius, num_entities);
-	profiler.finish_timing<0>();
+	cudaDeviceSynchronize();
+	profiler.finish_timing<Cells_Init>();
 
-	profiler.start_timing<1>();
+	profiler.start_timing<Sort>();
 	sort_cells();
-	profiler.finish_timing<1>();
+	cudaDeviceSynchronize();
+	profiler.finish_timing<Sort>();
 
 	unsigned int collisions = count_cols_1(num_blocks, num_threads, positions, radius, delta_mov, num_entities, num_cells);
 
-	profiler.start_timing<4>();
+	profiler.start_timing<Move>();
 	CUDA_CALL_2(kernel_move_entities, num_blocks, num_threads)(GET_RAW_PTR(positions), GET_RAW_PTR(delta_mov), num_entities, min_pos_x, max_pos_x, min_pos_y, max_pos_y);
 	thrust::fill(thrust::device, delta_mov.begin(), delta_mov.end(), 0.0f);
 	cudaDeviceSynchronize();
-	profiler.finish_timing<4>();
+	profiler.finish_timing<Move>();
 
 	return collisions;
 }
@@ -571,7 +576,6 @@ col_solver::col_solver() : Singleton()
 col_solver::~col_solver()
 {
 	cudaFree(temp);
-	printf("deleting col solver");
 }
 
 void col_solver::init_solver(const size_t num_entities, const float max_rad_, const float min_pos_x_, const float min_pos_y_, const float max_pos_x_, const float max_pos_y_)
@@ -631,7 +635,7 @@ unsigned int col_solver::count_cols_1(unsigned num_blocks, unsigned num_threads,
 {
 	//printf("Count\n");
 
-	profiler.start_timing<2>();
+	profiler.start_timing<Cols_Init>();
 
 	unsigned int cells_per_thread = ((num_cells - 1) / num_blocks) /
 		num_threads +
@@ -667,9 +671,9 @@ unsigned int col_solver::count_cols_1(unsigned num_blocks, unsigned num_threads,
 	num_blocks = std::min<unsigned int>(num_blocks, (dist / num_threads) + 1u);
 
 
-	profiler.finish_timing<2>();
+	profiler.finish_timing<Cols_Init>();
 
-	profiler.start_timing<3>();
+	profiler.start_timing<Cols_Resolve>();
 
 	for (int i = 0; i < 4; ++i)
 	{
@@ -684,13 +688,14 @@ unsigned int col_solver::count_cols_1(unsigned num_blocks, unsigned num_threads,
 
 		gpuErrchk(cudaPeekAtLastError());
 	}
-	profiler.finish_timing<3>();
 
+	cudaDeviceSynchronize();
 	gpuErrchk(cudaPeekAtLastError());
 
 	unsigned int collisions = 0;
 	cudaMemcpy(&collisions, temp, sizeof(unsigned int), cudaMemcpyDeviceToHost);
 
+	profiler.finish_timing<Cols_Resolve>();
 
 	return collisions;
 }

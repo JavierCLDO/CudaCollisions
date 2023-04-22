@@ -18,6 +18,10 @@ public:
 	Singleton(Singleton&& other) = delete;
 	Singleton& operator=(Singleton&& other) = delete;
 
+	/**
+	 * \brief Creates an instance
+	 * \param args Arguments forwarded to T
+	 */
 	template <typename ...Ts>
 	static void CreateInstance(Ts&& ...args)
 	{
@@ -26,14 +30,24 @@ public:
 		instance_.reset(new T(std::forward<Ts>(args)...));
 	}
 
+	/**
+	 * \brief Deletes the instance
+	 */
 	static void DeleteInstance()
 	{
 		assert(instance_.get() != nullptr);
-
 		instance_.reset(nullptr);
 	}
 
-	[[nodiscard]] static T* Instance() noexcept {
+
+	/**
+	 * \brief Retrieves the static instance. It does not create an instance!!! \n
+	 * To create an instance use CreateInstance. It's done this way so you can be sure this function will do exactly as the name suggests.
+	 * \return The instance casted to T
+	 */
+	[[nodiscard]] static T* Instance()
+	{
+		assert(instance_.get() != nullptr);
 		return static_cast<T*>(instance_.get());
 	}
 

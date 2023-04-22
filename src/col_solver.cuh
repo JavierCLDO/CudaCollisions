@@ -6,10 +6,14 @@
 #include <curand.h>
 #include <thrust/device_vector.h>
 
+#include "profiler_steps_enum.h"
 #include "simple_profiler.h"
 
 namespace fen
 {
+
+void init_objects(unsigned long long seed, unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, 
+	float min_pos_x, float max_pos_x, float min_pos_y, float max_pos_y, float min_radius, float max_radius);
 
 class col_solver : public Singleton<col_solver>
 {
@@ -22,7 +26,6 @@ public:
 		init_solver(num_entities, max_rad, min_pos_x, min_pos_y, max_pos_x, max_pos_y);
 	}
 
-	void init_objects(unsigned num_blocks, unsigned num_threads, thrust::device_vector<float>& positions, thrust::device_vector<float>& radius, thrust::device_vector<float>& delta_mov, float min_pos_x, float max_pos_x, float min_pos_y, float max_pos_y, float min_radius, float max_radius);
 
 	/**
 	 * \brief counts the number of collisions of entities (circles) with a given position and radius
@@ -65,11 +68,12 @@ protected:
 
 	curandGenerator_t generator;
 
-	SimpleProfiler<5, double, std::milli> profiler;
+	SimpleProfiler<ALL_, double, std::milli> profiler;
 
 public:
 
 	auto& get_profiler() { return profiler; }
+	auto& get_generator() { return generator; }
 };
 
 

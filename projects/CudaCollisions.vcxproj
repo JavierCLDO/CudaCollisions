@@ -94,6 +94,7 @@
     <ClInclude Include="..\src\col_solver.cuh" />
     <ClInclude Include="..\src\defines.h" />
     <ClInclude Include="..\src\on_collision.cuh" />
+    <ClInclude Include="..\src\profiler_steps_enum.h" />
     <ClInclude Include="..\src\simple_profiler.h" />
     <ClInclude Include="..\src\singleton.h" />
   </ItemGroup>
