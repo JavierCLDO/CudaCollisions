@@ -1,16 +1,26 @@
 ﻿#pragma once
 
+/**
+ * \brief Profiler steps
+ */
 enum Solver_Execution_Steps : unsigned {
 	Cells_Init, Sort, Cols_Init, Cols_Resolve, Move,
 	ALL_
 };
 
+
+/**
+ * \brief prefix ++ operator for the enum
+ */
 inline Solver_Execution_Steps& operator++(Solver_Execution_Steps& orig)
 {
 	orig = static_cast<Solver_Execution_Steps>(orig + 1); // static_cast required because enum + int -> int
 	return orig;
 }
 
+/**
+ * \brief Prints the enum name to the output stream
+ */
 inline std::ostream& operator<<(std::ostream& os, const Solver_Execution_Steps& e)
 {
 	switch (e)

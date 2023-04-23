@@ -2,8 +2,6 @@
 #include <cassert>
 #include <memory>
 
-#define COMMA ,
-
 #define INIT_INSTANCE_STATIC(T) std::unique_ptr<Singleton<T>> Singleton<T>::instance_ = { nullptr }
 
 template <typename T>

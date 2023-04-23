@@ -10,7 +10,7 @@ namespace fen
 {
 
 template<unsigned N, typename Precision, typename TimeRatio = std::ratio<1, 1>, // Default as seconds
-	typename = std::enable_if_t < std::is_floating_point_v<Precision>&& std::_Is_ratio_v<TimeRatio> >>
+	typename = std::enable_if_t < std::is_floating_point_v<Precision> && std::_Is_ratio_v<TimeRatio> >>
 class SimpleProfiler
 {
 private:
@@ -29,8 +29,8 @@ private:
 
 	// Assert messages
 #if NDEBUG
-	static constexpr int m_less_than_n_msg = 1;
-	static constexpr int step_before_msg = 1;
+	static constexpr bool m_less_than_n_msg = true;
+	static constexpr bool step_before_msg = true;
 #else
 	static constexpr const char* m_less_than_n_msg = "m needs to be less than template N";
 	static constexpr const char* step_before_msg = "you need to finish a step before";
@@ -55,7 +55,7 @@ public:
 	 * \param t_ time
 	 */
 	template<unsigned M, typename = std::enable_if_t<M < N>>
-	void add_time(Precision t_)
+	void add_time(const Precision& t_)
 	{
 		timers[M] += t_;
 	}
@@ -85,9 +85,9 @@ public:
 	 * \param m the timer
 	 * \param t_ time
 	 */
-	void add_time(unsigned m, Precision t_)
+	void add_time(unsigned m, const Precision& t_)
 	{
-		assert(m < N&& m_less_than_n_msg);
+		assert(m < N && m_less_than_n_msg);
 		timers[m] += t_;
 	}
 
@@ -97,7 +97,7 @@ public:
 	 */
 	void start_timing(unsigned m)
 	{
-		assert(m < N&& m_less_than_n_msg);
+		assert(m < N && m_less_than_n_msg);
 		timings[m] = std::chrono::high_resolution_clock::now();
 	}
 
@@ -107,7 +107,7 @@ public:
 	 */
 	void finish_timing(unsigned m)
 	{
-		assert(m < N&& m_less_than_n_msg);
+		assert(m < N && m_less_than_n_msg);
 		add_time(m, std::chrono::duration<Precision>(std::chrono::high_resolution_clock::now() - timings[m]).count());
 	}
 
